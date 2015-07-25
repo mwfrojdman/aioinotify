@@ -14,14 +14,13 @@ def print_event(event):
 def watch_directory(path):
     transport, inotify = yield from connect_inotify()
 
-    with (yield from inotify.watch(print_event, path, all_events=True)):
-        print('Printing all file system events in {}'.format(path))
-        yield from asyncio.sleep(60.0)
+    with inotify:
+        watch = yield from inotify.watch(print_event, path, all_events=True)
+        with watch:
+            print('Printing all file system events in {}'.format(path))
+            yield from asyncio.sleep(60.0)
 
-        print('And now his watch is ended')
-
-    inotify.close()
-    transport.close()
+            print('And now his watch is ended')
 
 
 if __name__ == '__main__':
