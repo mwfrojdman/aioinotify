@@ -49,6 +49,9 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
         event = InotifyEventStructure.from_buffer_copy(event_data)
         if event.len > 0:
             raw_name = yield from self._stream_reader.readexactly(event.len)
+            # Linux seems to pad the file paths to at least 16 bytes, even when the actual string
+            # is shorter
+            raw_name = raw_name.rstrip(b'\x00')
             encoding = sys.getfilesystemencoding()
             name = raw_name.decode(encoding)
         else:
