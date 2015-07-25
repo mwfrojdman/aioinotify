@@ -32,7 +32,6 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
         super().connection_lost(exc)
 
     def close(self):
-        # TODO: close all watchers
         if not self._closed:
             self.close_event.set()
             self._closed = True
