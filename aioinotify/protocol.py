@@ -23,6 +23,12 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
         self._closed = False
         self.close_event = asyncio.Event(loop=loop)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
     def connection_made(self, transport):
         super().connection_made(transport)
         self.transport = transport
