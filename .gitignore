@@ -55,3 +55,8 @@ docs/_build/
 
 # PyBuilder
 target/
+
+# Eclipse and pydev
+.project
+.pydevproject
+.settings
