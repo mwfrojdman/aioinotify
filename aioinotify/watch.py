@@ -15,6 +15,12 @@ class Watch:
         self._closed = False
         self._protocol = protocol
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
     @asyncio.coroutine
     def dispatch_event(self, event):
         if not self._closed:

@@ -17,9 +17,10 @@ def main():
 
     logging.basicConfig(level=getattr(logging, args.log_level))
 
+    loop = asyncio.get_event_loop()
     try:
-        loop = asyncio.get_event_loop()
         _, inotify = loop.run_until_complete(connect_inotify())
+
         @asyncio.coroutine
         def run(inotify):
             @asyncio.coroutine
