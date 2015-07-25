@@ -29,6 +29,11 @@ class InotifyEvent:
         return 'path={pathname}: {bits}'.format(
             pathname=self.pathname, bits=', '.join(bits))
 
+    def as_dict(self):
+        return {
+            'path': self.pathname,
+            'bits': [member.name for member in InotifyMask if getattr(self, member.name)]}
+
 
 class _MaskDescriptor:
     """A utility descriptor for InotifyEvent. It gets the event object's _mask attribute and

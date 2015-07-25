@@ -13,18 +13,16 @@ def handle(request):
 
     @asyncio.coroutine
     def callback(event):
-        data = 'data: {}\r\n\r\n'.format(json.dumps(str(event)))
+        data = 'data: {}\r\n\r\n'.format(json.dumps(event.as_dict()))
         response.write(data.encode('utf-8'))
         yield from response.drain()
 
     response.start(request)
 
     transport, inotify = yield from connect_inotify()
-    watch = yield from inotify.watch(callback, path, all_events=True)
-    try:
-        yield from inotify.close_event.wait()
-    finally:
-        watch.close()
+    with inotify:
+        with (yield from inotify.watch(callback, path, all_events=True)):
+            yield from inotify.close_event.wait()
 
 
 @asyncio.coroutine
