@@ -35,6 +35,11 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
             self._closed = True
 
     @asyncio.coroutine
+    def close_and_wait(self):
+        self.close()
+        return (yield from self._worker)
+
+    @asyncio.coroutine
     def start(self):
         self._worker = asyncio.async(self.run())
 
@@ -58,7 +63,6 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
                 yield from self.dispatch_event(event)
             except Exception:
                 logger.error(format_exc())
-                raise NotImplementedError()
 
     @asyncio.coroutine
     def dispatch_event(self, event):
@@ -66,7 +70,8 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
             watch = self._watches[event.wd]
         except KeyError:
             logger.info('Unknown watch %s', event.wd)
-        yield from watch.dispatch_event(event)
+        else:
+            yield from watch.dispatch_event(event)
 
     @asyncio.coroutine
     def watch(self, callback, pathname, all_events=False, **kwargs):
@@ -74,7 +79,7 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
             for member in InotifyMask:
                 kwargs[member.name] = True
         watch_descriptor = add_watch(self._pipe.fileno(), pathname, **kwargs)
-        watch = Watch(watch_descriptor, callback)
+        watch = Watch(watch_descriptor, callback, self)
         self._watches[watch_descriptor] = watch
         return watch
 
