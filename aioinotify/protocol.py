@@ -23,16 +23,21 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
         self._closed = False
         self.close_event = asyncio.Event(loop=loop)
 
+    def connection_made(self, transport):
+        super().connection_made(transport)
+        self.transport = transport
+
     def connection_lost(self, exc):
         self.close()
         super().connection_lost(exc)
 
     def close(self):
         # TODO: close all watchers
-        # TODO: close pipe
         if not self._closed:
             self.close_event.set()
             self._closed = True
+            if self.transport is not None:
+                self.transport.close()
 
     @asyncio.coroutine
     def close_and_wait(self):
