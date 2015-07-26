@@ -17,6 +17,10 @@ class InotifyMask(Enum):
 
 
 class InotifyEvent:
+    """
+    A file system event from a monotored aioinotify.watch.Watch.
+    """
+
     def __init__(self, pathname, event):
         self.pathname = pathname
         self._mask = event.mask

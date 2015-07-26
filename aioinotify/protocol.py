@@ -88,6 +88,14 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
 
     @asyncio.coroutine
     def watch(self, callback, pathname, all_events=False, **kwargs):
+        """
+        :param callback: A coroutine accepting a single argument, an InotifyEvent instance.
+        The callback is called for each event matching the watch's pathname and event types.
+        :param str pathname: Path to monitor for events. Relative to the current working directory.
+        :param bool all_events: Optional argument which when set to True, leads to all event types
+        being reported.
+        :rtype:aioinotify.watch.Watch
+        """
         if all_events:
             for member in InotifyMask:
                 kwargs[member.name] = True

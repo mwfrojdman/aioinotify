@@ -2,7 +2,9 @@ import asyncio
 
 
 class Watch:
-    """Represents an inotify watch as added by InotifyProtocol.watch()"""
+    """Represents an inotify watch as added by InotifyProtocol.watch().
+
+    Calling the close() method stops monitoring for the watch's path for events."""
 
     def __init__(self, watch_descriptor, callback, protocol):
         """
