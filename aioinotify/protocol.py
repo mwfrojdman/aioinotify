@@ -87,7 +87,7 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
             yield from watch.dispatch_event(event)
 
     @asyncio.coroutine
-    def watch(self, callback, pathname, all_events=False, **kwargs):
+    def watch(self, callback, pathname, *, all_events=False, **kwargs):
         """
         :param callback: A coroutine accepting a single argument, an InotifyEvent instance.
         The callback is called for each event matching the watch's pathname and event types.
