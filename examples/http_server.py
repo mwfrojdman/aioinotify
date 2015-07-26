@@ -19,8 +19,7 @@ def handle(request):
 
     response.start(request)
 
-    transport, inotify = yield from connect_inotify()
-    with inotify:
+    with (yield from connect_inotify()) as inotify:
         with (yield from inotify.watch(callback, path, all_events=True)):
             yield from inotify.close_event.wait()
 
