@@ -110,8 +110,7 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
 
 
 @asyncio.coroutine
-def _connect_inotify():
-    loop = asyncio.get_event_loop()
+def _connect_inotify(loop):
     pipe = init(nonblock=True)
     logger.debug('fd is %s', pipe.fileno())
 
@@ -125,10 +124,12 @@ def _connect_inotify():
 
 
 @asyncio.coroutine
-def connect_inotify():
+def connect_inotify(loop=None):
     """
     Initializes a new inotify instance and makes it ready for reading
     :rtype: InotifyProtocol
     """
-    _, protocol = yield from _connect_inotify()
+    if not loop:
+        loop = asyncio.get_event_loop()
+    _, protocol = yield from _connect_inotify(loop)
     return protocol
