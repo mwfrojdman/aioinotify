@@ -33,10 +33,7 @@ setup(
         'License :: OSI Approved :: Apache Software License',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
-        # TODO: check if it works on python 3.3 and if it does, add extras_require 3.3 -> asyncio
-        # and entry on this line
-        'Programming Language :: Python :: 3.4',
-        # TODO: check it works on Python 3.5 too
+        'Programming Language :: Python :: 3.7',
         'Operating System :: POSIX :: Linux'],
     packages = find_packages(),
     install_requires = [],

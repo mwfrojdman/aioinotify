@@ -1,34 +1,48 @@
-import asyncio
+import functools
+import operator
+from pathlib import Path
+from typing import Set, Callable, Optional
+
+from .events import InotifyFlag, HighLevelEvent, InotifyEvent
+from .protocol import InotifyProtocol
 
 
-class Watch:
-    """Represents an inotify watch as added by InotifyProtocol.watch().
-
-    Calling the close() method stops monitoring for the watch's path for events."""
-
-    def __init__(self, watch_descriptor, callback, protocol):
-        """
-        :param int watch_descriptor: The watch descriptor as returned by inotify_add_watch
-        :param callback: A function with one positional argument (the event object) called when
-        an inotify event happens.
-        """
-        self.watch_descriptor = watch_descriptor
-        self._callback = callback
-        self._closed = False
+class InotifyWatch:
+    def __init__(
+        self, path: Path, flags: Set[InotifyFlag], protocol: InotifyProtocol, queue_event: Callable[[HighLevelEvent], None],
+    ):
+        self.path = path
         self._protocol = protocol
+        self.flags = flags
+        self._mask = functools.reduce(operator.or_, (flag.value for flag in flags))  # no initial, zero mask is forbidden
+        self._queue_event = queue_event
+        self._wd: Optional[int] = None
+        self._closed = False
 
-    def __enter__(self):
+    @property
+    def closed(self):
+        return self._closed
+
+    async def __aenter__(self):
+        if self._wd is not None:
+            raise ValueError('Async context already entered')
+        self._wd = self._protocol.add_watch(path=self.path, mask=self._mask, callback=self._callback)
         return self
 
-    def __exit__(self, *exc):
-        self.close()
-
-    @asyncio.coroutine
-    def dispatch_event(self, event):
-        if not self._closed:
-            yield from self._callback(event)
-
-    def close(self):
-        if not self._closed:
-            self._protocol._remove_watch(self.watch_descriptor)
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
         self._closed = True
+        if self._wd is not None:
+            self._protocol.remove_watch(watch_descriptor=self._wd)
+
+    def _callback(self, event: InotifyEvent) -> None:
+        if self._closed:
+            return
+        mask = event.event.mask
+        if event.pathname is None:
+            path = self.path
+        else:
+            path = self.path.joinpath(event.pathname)
+        self._queue_event(HighLevelEvent(path=path, cookie=event.event.cookie, mask=mask))
+        if mask & InotifyFlag.ignored.value != 0:
+            self._wd = None  # watch descriptor cannot be removed
+            self._closed = True

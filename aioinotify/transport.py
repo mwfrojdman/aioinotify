@@ -1,12 +1,13 @@
 """
-This module is essentially copy-paste from the Python 3.4 standard library's
+This module is essentially copy-paste from the Python 3.7 standard library's
 asyncio.unix_events._UnixReadPipeTransport. That can't however be directly used as the inotify pipe
 has a different mode.
 """
-from asyncio import selectors, transports
+import selectors
+from asyncio import transports, futures, selector_events
+import errno
 import os
 import logging
-import sys
 import warnings
 
 
@@ -23,36 +24,26 @@ class InotifyTransport(transports.ReadTransport):
         self._loop = loop
         self._pipe = pipe
         self._fileno = pipe.fileno()
-        mode = os.fstat(self._fileno).st_mode
-        if mode != 0o600:
-            raise ValueError("Inotify pipe transport is for inotify pipes only.")
         self._protocol = protocol
         self._closing = False
+
+        mode = os.fstat(self._fileno).st_mode
+        if mode != 0o600:
+            self._pipe = None
+            self._fileno = None
+            self._protocol = None
+            raise ValueError("Pipe transport is for inotify pipes only.")
+
+        os.set_blocking(self._fileno, False)
+
         self._loop.call_soon(self._protocol.connection_made, self)
         # only start reading when connection_made() has been called
-        self._loop.call_soon(self._loop.add_reader,
+        self._loop.call_soon(self._loop._add_reader,
                              self._fileno, self._read_ready)
         if waiter is not None:
             # only wake up the waiter when connection_made() has been called
-            self._loop.call_soon(self._set_result_unless_cancelled, waiter, None)
-
-    @staticmethod
-    def _set_result_unless_cancelled(future, result):
-        """Helper setting the result only if the future was not cancelled."""
-        if future.cancelled():
-            return
-        future.set_result(result)
-
-    @staticmethod
-    def _test_selector_event(selector, fd, event):
-        # Test if the selector is monitoring 'event' events
-        # for the file descriptor 'fd'.
-        try:
-            key = selector.get_key(fd)
-        except KeyError:
-            return False
-        else:
-            return bool(key.events & event)
+            self._loop.call_soon(futures._set_result_unless_cancelled,
+                                 waiter, None)
 
     def __repr__(self):
         info = [self.__class__.__name__]
@@ -60,18 +51,20 @@ class InotifyTransport(transports.ReadTransport):
             info.append('closed')
         elif self._closing:
             info.append('closing')
-        info.append('fd=%s' % self._fileno)
-        if self._pipe is not None:
-            polling = self._test_selector_event(
-                self._loop._selector,
-                self._fileno, selectors.EVENT_READ)
+        info.append(f'fd={self._fileno}')
+        selector = getattr(self._loop, '_selector', None)
+        if self._pipe is not None and selector is not None:
+            polling = selector_events._test_selector_event(
+                selector, self._fileno, selectors.EVENT_READ)
             if polling:
                 info.append('polling')
             else:
                 info.append('idle')
+        elif self._pipe is not None:
+            info.append('open')
         else:
             info.append('closed')
-        return '<%s>' % ' '.join(info)
+        return '<{}>'.format(' '.join(info))
 
     def _read_ready(self):
         try:
@@ -87,33 +80,36 @@ class InotifyTransport(transports.ReadTransport):
                 if self._loop.get_debug():
                     logger.info("%r was closed by peer", self)
                 self._closing = True
-                self._loop.remove_reader(self._fileno)
+                self._loop._remove_reader(self._fileno)
                 self._loop.call_soon(self._protocol.eof_received)
                 self._loop.call_soon(self._call_connection_lost, None)
 
     def pause_reading(self):
-        logger.debug('Pausing reading')
-        self._loop.remove_reader(self._fileno)
+        self._loop._remove_reader(self._fileno)
 
     def resume_reading(self):
-        logger.debug('Resuming reading')
-        self._loop.add_reader(self._fileno, self._read_ready)
+        self._loop._add_reader(self._fileno, self._read_ready)
+
+    def set_protocol(self, protocol):
+        self._protocol = protocol
+
+    def get_protocol(self):
+        return self._protocol
+
+    def is_closing(self):
+        return self._closing
 
     def close(self):
         if not self._closing:
             self._close(None)
 
-    # On Python 3.3 and older, objects with a destructor part of a reference
-    # cycle are never destroyed. It's not more the case on Python 3.4 thanks
-    # to the PEP 442.
-    if sys.version_info >= (3, 4):
-        def __del__(self):
-            if self._pipe is not None:
-                warnings.warn("unclosed transport %r" % self, ResourceWarning)
-                self._pipe.close()
+    def __del__(self):
+        if self._pipe is not None:
+            warnings.warn(f"unclosed transport {self!r}", ResourceWarning,
+                          source=self)
+            self._pipe.close()
 
     def _fatal_error(self, exc, message='Fatal error on pipe transport'):
-        logger.debug('Fatal error occurred')
         # should be called by exception handler only
         if (isinstance(exc, OSError) and exc.errno == errno.EIO):
             if self._loop.get_debug():
@@ -129,11 +125,10 @@ class InotifyTransport(transports.ReadTransport):
 
     def _close(self, exc):
         self._closing = True
-        self._loop.remove_reader(self._fileno)
+        self._loop._remove_reader(self._fileno)
         self._loop.call_soon(self._call_connection_lost, exc)
 
     def _call_connection_lost(self, exc):
-        logger.info('Lost connection: %s', exc)
         try:
             self._protocol.connection_lost(exc)
         finally:

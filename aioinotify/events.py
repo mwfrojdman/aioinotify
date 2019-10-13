@@ -1,7 +1,8 @@
 from enum import Enum
+from pathlib import Path
 
 
-class InotifyMask(Enum):
+class InotifyFlag(Enum):
     access = 0x1
     modify = 0x2
     attrib = 0x4
@@ -14,6 +15,14 @@ class InotifyMask(Enum):
     delete = 0x200
     delete_self = 0x400
     move_self = 0x800
+    # the flags below can't be subscribed to
+    unmount = 0x2000
+    q_overflow = 0x4000
+    ignored = 0x8000
+    isdir = 0x40000000
+
+
+ALL_FLAGS = {flag for flag in InotifyFlag if flag is not InotifyFlag.ignored}
 
 
 class InotifyEvent:
@@ -23,20 +32,19 @@ class InotifyEvent:
 
     def __init__(self, pathname, event):
         self.pathname = pathname
-        self._mask = event.mask
-        self.wd = event.wd
-        self.cookie = event.cookie
+        self.event = event
+
+
+class HighLevelEvent:
+    def __init__(self, path: Path, cookie: int, mask: int):
+        self.path = path
+        self.cookie = cookie
+        self.mask = mask
 
     def __str__(self):
-        bits = [member.name for member in InotifyMask if getattr(self, member.name)]
-        #bits = [bit_name for bit_name in self.bit_names if getattr(self, bit_name)]
-        return 'path={pathname}: {bits}'.format(
-            pathname=self.pathname, bits=', '.join(bits))
-
-    def as_dict(self):
-        return {
-            'path': self.pathname,
-            'bits': [member.name for member in InotifyMask if getattr(self, member.name)]}
+        flags = ', '.join(member.name for member in InotifyFlag if getattr(self, member.name))
+        cookie = '' if self.cookie == 0 else self.cookie
+        return f'{self.path}: {flags} ({self.mask}){cookie}'
 
 
 class _MaskDescriptor:
@@ -47,9 +55,9 @@ class _MaskDescriptor:
         self.bit = bit
 
     def __get__(self, obj, objtype):
-        return obj._mask & self.bit != 0
+        return obj.mask & self.bit != 0
 
 
-for member in InotifyMask:
-    setattr(InotifyEvent, member.name, _MaskDescriptor(member.value))
+for member in InotifyFlag:
+    setattr(HighLevelEvent, member.name, _MaskDescriptor(member.value))
 del member

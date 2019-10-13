@@ -1,42 +1,40 @@
+from contextlib import AsyncExitStack
 import logging
 from argparse import ArgumentParser
 import asyncio
+from pathlib import Path
+from typing import Iterable
 
-from .protocol import connect_inotify
-
+from .notifier import Inotifier
+from .events import ALL_FLAGS
 
 logger = logging.getLogger(__name__)
+
+
+async def _main(paths: Iterable[Path]):
+    async with Inotifier() as inotifier, AsyncExitStack() as stack:
+        watches = [inotifier.watch(path=path, flags=ALL_FLAGS) for path in paths]
+        for watch in watches:
+            await stack.enter_async_context(watch)
+
+        async for event in inotifier:
+            print(event)
+            if event.ignored:
+                watches = [watch for watch in watches if not watch.closed]
+                if not watches:
+                    break
 
 
 def main():
     parser = ArgumentParser()
     parser.add_argument(
         '-ll', '--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='WARNING')
-    parser.add_argument('paths', nargs='+', help='File path(s) to watch for file system events')
+    parser.add_argument('paths', nargs='+', help='File path(s) to watch for file system events', type=Path)
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level))
 
-    loop = asyncio.get_event_loop()
-    try:
-        _, inotify = loop.run_until_complete(connect_inotify())
-
-        @asyncio.coroutine
-        def run(inotify):
-            @asyncio.coroutine
-            def callback(event):
-                print(event)
-            for path in args.paths:
-                watch = yield from inotify.watch(callback, path, all_events=True)
-                logger.debug('Added watch %s for all events in %s', watch.watch_descriptor, path)
-            yield from inotify.close_event.wait()
-        try:
-            loop.run_until_complete(run(inotify))
-        except KeyboardInterrupt:
-            inotify.close()
-        loop.run_until_complete(inotify.close_event.wait())
-    finally:
-        loop.close()
+    asyncio.run(_main(args.paths))
 
 
 if __name__ == '__main__':

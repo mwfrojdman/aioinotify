@@ -1,14 +1,11 @@
 import asyncio
-from asyncio.futures import Future
-import sys
+import os
+from pathlib import Path
 import logging
-from traceback import format_exc
+from typing import Callable, Dict
 
-from .bindings import INOTIFY_EVENT_SIZE, InotifyEventStructure, add_watch, rm_watch, init
-from .watch import Watch
-from .events import InotifyEvent, InotifyMask
-from .transport import InotifyTransport
-
+from .bindings import INOTIFY_EVENT_SIZE, InotifyEventStructure, add_watch, rm_watch
+from .events import InotifyEvent, InotifyFlag
 
 logger = logging.getLogger(__name__)
 
@@ -17,119 +14,44 @@ class InotifyProtocol(asyncio.StreamReaderProtocol):
     def __init__(self, loop, pipe):
         super().__init__(asyncio.StreamReader(loop=loop), loop=loop)
         self._pipe = pipe
-        self.disconnected = False
-        self._watches = {}
-        self._worker = None
-        self._closed = False
-        self.close_event = asyncio.Event(loop=loop)
+        self._watches: Dict[int, Callable[[InotifyEvent], None]] = {}
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-
-    def connection_made(self, transport):
-        super().connection_made(transport)
-        self.transport = transport
-
-    def connection_lost(self, exc):
-        self.close()
-        super().connection_lost(exc)
-
-    def close(self):
-        if not self._closed:
-            self.close_event.set()
-            self._closed = True
-            if self.transport is not None:
-                self.transport.close()
-
-    @asyncio.coroutine
-    def close_and_wait(self):
-        self.close()
-        return (yield from self._worker)
-
-    @asyncio.coroutine
-    def start(self):
-        self._worker = asyncio.async(self.run())
-
-    @asyncio.coroutine
-    def _read_notification(self):
-        event_data = yield from self._stream_reader.readexactly(INOTIFY_EVENT_SIZE)
+    async def read_notification(self) -> InotifyEvent:
+        logger.debug("Waiting to read %d bytes for next event", INOTIFY_EVENT_SIZE)
+        event_data = await self._stream_reader.readexactly(INOTIFY_EVENT_SIZE)
         event = InotifyEventStructure.from_buffer_copy(event_data)
         if event.len > 0:
-            raw_name = yield from self._stream_reader.readexactly(event.len)
+            raw_name = await self._stream_reader.readexactly(event.len)
             # Linux seems to pad the file paths to at least 16 bytes, even when the actual string
             # is shorter
             raw_name = raw_name.rstrip(b'\x00')
-            encoding = sys.getfilesystemencoding()
-            name = raw_name.decode(encoding)
+            name = os.fsdecode(raw_name)
         else:
             name = None
         return InotifyEvent(name, event)
 
-    @asyncio.coroutine
-    def run(self):
-        while not self.close_event.is_set():
-            try:
-                event = yield from self._read_notification()
-                yield from self.dispatch_event(event)
-            except Exception:
-                logger.error(format_exc())
-
-    @asyncio.coroutine
-    def dispatch_event(self, event):
+    async def dispatch_events(self):
         try:
-            watch = self._watches[event.wd]
-        except KeyError:
-            logger.info('Unknown watch %s', event.wd)
-        else:
-            yield from watch.dispatch_event(event)
+            while True:
+                event = await self.read_notification()
+                try:
+                    callback = self._watches[event.event.wd]
+                except KeyError:
+                    logger.info('Unknown watch %s', event.event.wd)
+                else:
+                    callback(event)
+        except asyncio.CancelledError:
+            logger.debug("Dispatcher cancelled")
+            raise
+        except Exception:
+            logger.exception("Exception in dispatch_event")
+            raise
 
-    @asyncio.coroutine
-    def watch(self, callback, pathname, *, all_events=False, **kwargs):
-        """
-        :param callback: A coroutine accepting a single argument, an InotifyEvent instance.
-        The callback is called for each event matching the watch's pathname and event types.
-        :param str pathname: Path to monitor for events. Relative to the current working directory.
-        :param bool all_events: Optional argument which when set to True, leads to all event types
-        being reported.
-        :rtype:aioinotify.watch.Watch
-        """
-        if all_events:
-            for member in InotifyMask:
-                kwargs[member.name] = True
-        watch_descriptor = add_watch(self._pipe.fileno(), pathname, **kwargs)
-        watch = Watch(watch_descriptor, callback, self)
-        self._watches[watch_descriptor] = watch
-        return watch
+    def add_watch(self, path: Path, mask: int, callback: Callable[[InotifyEvent], None]) -> int:
+        watch_descriptor = add_watch(fd=self._pipe.fileno(), path=path, mask=mask)
+        self._watches[watch_descriptor] = callback
+        return watch_descriptor
 
-    def _remove_watch(self, watch_descriptor):
-        self._watches.pop(watch_descriptor)
+    def remove_watch(self, watch_descriptor: int) -> None:
         rm_watch(self._pipe.fileno(), watch_descriptor)
-
-
-@asyncio.coroutine
-def _connect_inotify(loop):
-    pipe = init(nonblock=True)
-    logger.debug('fd is %s', pipe.fileno())
-
-    protocol = InotifyProtocol(loop, pipe)
-    waiter = Future(loop=loop)
-    transport = InotifyTransport(loop, pipe, protocol, waiter)
-    yield from waiter
-    yield from protocol.start()
-
-    return transport, protocol
-
-
-@asyncio.coroutine
-def connect_inotify(loop=None):
-    """
-    Initializes a new inotify instance and makes it ready for reading
-    :rtype: InotifyProtocol
-    """
-    if not loop:
-        loop = asyncio.get_event_loop()
-    _, protocol = yield from _connect_inotify(loop)
-    return protocol
+        del self._watches[watch_descriptor]

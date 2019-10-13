@@ -1,28 +1,23 @@
 #!/usr/bin/env python3
-
+from pathlib import Path
 import sys
 import asyncio
-from aioinotify import connect_inotify
+from aioinotify.notifier import Inotifier
+from aioinotify.events import ALL_FLAGS
 
 
-@asyncio.coroutine
-def print_event(event):
-    print('Got event: {}'.format(event))
-
-
-@asyncio.coroutine
-def watch_directory(path):
+async def watch_directory(path):
     """
     Watch for all events in *path* for 60 seconds.
     """
-    with (yield from connect_inotify()) as inotify:
-        with (yield from inotify.watch(print_event, path, all_events=True)):
+    async with Inotifier() as inotifier:
+        async with inotifier.watch(path, mask=ALL_FLAGS):
             print('Printing all file system events in {}'.format(path))
-            yield from asyncio.sleep(60.0)
+            await asyncio.sleep(60.0)
             print('And now his watch is ended')
+            async for event in inotifier:
+                print(f"Got event: {event}")
 
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(watch_directory(sys.argv[1]))
-    loop.close()
+    asyncio.run(watch_directory(Path(sys.argv[1])))
